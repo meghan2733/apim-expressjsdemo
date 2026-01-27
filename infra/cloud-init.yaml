@@ -1,0 +1,43 @@
+#cloud-config
+package_update: true
+packages:
+  - nginx
+  - docker.io
+
+runcmd:
+  - systemctl enable docker
+  - systemctl start docker
+  - systemctl enable nginx
+  - systemctl start nginx
+  # Allow current user (azureuser) to use docker without sudo
+  - usermod -aG docker azureuser
+
+  # Write Nginx config
+  - cat << 'EOF' > /etc/nginx/sites-available/apim-lab.conf
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    server_name _;
+
+    location /health {
+        proxy_pass http://127.0.0.1:3000/health;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:3000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location = / {
+        return 200 'OK - Nginx is up';
+        add_header Content-Type text/plain;
+    }
+}
+EOF
+
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -s /etc/nginx/sites-available/apim-lab.conf /etc/nginx/sites-enabled/apim-lab.conf
+  - nginx -t
+  - systemctl restart nginx
