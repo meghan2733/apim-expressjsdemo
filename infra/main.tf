@@ -6,16 +6,13 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.100"
     }
-    template = {
-      source  = "hashicorp/template"
-      version = "~> 2.2"
-    }
   }
 }
 
 provider "azurerm" {
   features        {}
   subscription_id = var.subscription_id
+  tenant_id = var.tenant_id
 }
 
 # Resource Group
@@ -46,7 +43,7 @@ resource "azurerm_public_ip" "vm_pip" {
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   allocation_method   = "Static"
-  sku                 = "Basic"
+  sku                 = "Standard"
 }
 
 # Network Security Group for VM
@@ -87,7 +84,7 @@ resource "azurerm_network_interface" "vm_nic" {
   resource_group_name = azurerm_resource_group.rg.name
 
   ip_configuration {
-    name                          = "ipconfig1"
+    name                          = "internal"
     subnet_id                     = azurerm_subnet.snet_backend.id
     private_ip_address_allocation = "Dynamic"
     public_ip_address_id          = azurerm_public_ip.vm_pip.id
@@ -110,7 +107,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
   name                = var.vm_name
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
-  size                = "Standard_B1s"
+  size                = "Standard_B2s_v2"
 
   admin_username = var.admin_username
 
@@ -132,7 +129,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
   source_image_reference {
     publisher = "Canonical"
     offer     = "0001-com-ubuntu-server-jammy"
-    sku       = "22_04-lts"
+    sku       = "22_04-lts-gen2"
     version   = "latest"
   }
 
@@ -148,7 +145,7 @@ resource "azurerm_api_management" "apim" {
   publisher_name      = "Meghan Kulkarni"
   publisher_email     = "meghan.kulkarni@outlook.com"
 
-  sku_name = "Consumption_0"
+  sku_name = "Developer_1"
 }
 
 # Backend API in APIM
@@ -163,6 +160,7 @@ resource "azurerm_api_management_api" "backend_api" {
 
   # Backend URL: Nginx on VM public IP
   service_url = "http://${azurerm_public_ip.vm_pip.ip_address}/api"
+  subscription_required = true
 }
 
 # Operation calling GET /api/hello on Nginx
@@ -182,12 +180,27 @@ resource "azurerm_api_management_api_operation" "hello_operation" {
   }
 }
 
+resource "azurerm_api_management_api_operation" "health_operation" {
+  operation_id        = "health"
+  api_name            = azurerm_api_management_api.backend_api.name
+  api_management_name = azurerm_api_management.apim.name
+  resource_group_name = azurerm_resource_group.rg.name
+  display_name        = "Health"
+  method              = "GET"
+  url_template        = "/health"
+  description         = "Calls backend /health via Nginx"
+
+  response {
+    status_code      = 200
+    description = "Successful response"
+  }
+}
+
 # Product requiring subscription
 resource "azurerm_api_management_product" "product" {
   product_id          = "starter"
   api_management_name = azurerm_api_management.apim.name
   resource_group_name = azurerm_resource_group.rg.name
-
   display_name          = "Starter Product"
   description           = "Starter product requiring subscription"
   subscription_required = true
@@ -203,23 +216,12 @@ resource "azurerm_api_management_product_api" "product_api" {
   resource_group_name = azurerm_resource_group.rg.name
 }
 
-# User for subscription
-resource "azurerm_api_management_user" "subscription_user" {
-  user_id             = "meghan-kulkarni"
-  api_management_name = azurerm_api_management.apim.name
-  resource_group_name = azurerm_resource_group.rg.name
-  first_name          = "Meghan"
-  last_name           = "Kulkarni"
-  email               = "meghan.kulkarni@outlook.com"
-}
-
 # Subscription
 resource "azurerm_api_management_subscription" "subscription" {
   api_management_name = azurerm_api_management.apim.name
   resource_group_name = azurerm_resource_group.rg.name
-
   display_name = "Meghan's Subscription"
+  product_id          = azurerm_api_management_product.product.id
   state        = "active"
-  user_id      = azurerm_api_management_user.subscription_user.id
-  product_id   = azurerm_api_management_product.product.product_id
+  allow_tracing       = true
 }
